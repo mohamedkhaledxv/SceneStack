@@ -1,6 +1,6 @@
 import { auth, db } from '@/firebaseConfig';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { UserMetadataInterface } from "@/types/user";
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 export const setUserMetadata = async (data: Partial<UserMetadataInterface>) => {
   const user = auth.currentUser;
@@ -34,18 +34,23 @@ export const getUserMetadata = async (): Promise<UserMetadataInterface | null> =
   const user = auth.currentUser;
 
   if (!user) {
-    console.error("No authenticated user found.");
+    console.log("No authenticated user found when fetching metadata.");
     return null;
   }
 
-  const userRef = doc(db, "users", user.uid);
-  const docSnap = await getDoc(userRef);
+  try {
+    const userRef = doc(db, "users", user.uid);
+    const docSnap = await getDoc(userRef);
 
-  if (!docSnap.exists()) {
-    console.warn("User metadata document not found.");
-    return null;
+    if (!docSnap.exists()) {
+      console.warn("User metadata document not found.");
+      return null;
+    }
+
+    const data = docSnap.data();
+    return data as UserMetadataInterface;
+  } catch (error) {
+    console.error("Error fetching user metadata:", error);
+    throw error;
   }
-
-  const data = docSnap.data();
-  return data as UserMetadataInterface;
 };

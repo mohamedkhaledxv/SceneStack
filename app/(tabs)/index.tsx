@@ -1,7 +1,6 @@
-import { getUserMetadata } from "@/services/firebase/users";
-import { getWatchHistory } from "@/services/firebase/watchHistory";
-import { getMovieList } from "@/services/getMovieLists";
-import { UserMetadataInterface } from "@/types/user";
+import SectionCarousel from "@/components/SectionCarousel";
+import SectionModal from "@/components/SectionModal";
+import { useMoviesStore, useUserStore } from "@/stores";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
@@ -18,35 +17,48 @@ import { icons } from "../../constants/icons";
 import { MovieGenreMap } from "../../constants/moviegenre";
 import { getMovies } from "../../services/getMovies";
 import { Movie } from "../../types/movie";
-import SectionCarousel from "@/components/SectionCarousel";
 
 const categories = Object.keys(MovieGenreMap);
 
 const IndexScreen = () => {
+  // Zustand stores
+  const { 
+    userMetadata, 
+    watchHistory, 
+    isLoading: userLoading, 
+    fetchUserMetadata, 
+    fetchWatchHistory 
+  } = useUserStore();
+  
+  const {
+    nowPlayingMovies,
+    nowPlayingLoading,
+    upcomingMovies,
+    upcomingLoading,
+    topRatedMovies,
+    topRatedLoading,
+    fetchNowPlaying,
+    fetchUpcoming,
+    fetchTopRated,
+    loadMoreNowPlaying,
+    loadMoreUpcoming,
+    loadMoreTopRated,
+  } = useMoviesStore();
+
+  // Local state (keep these local as they're specific to this screen)
   const [selectedCategory, setSelectedCategory] = useState("");
   const [movies, setMovies] = useState<Movie[]>([]);
+  const [moviesPage, setMoviesPage] = useState(1);
+  const [moviesHasMore, setMoviesHasMore] = useState(true);
   const [moviesLoading, setMoviesLoading] = useState(true);
-
-  const [watchHistory, setWatchHistory] = useState<Movie[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(true);
-
-  const [nowPlayingMovies, setNowPlayingMovies] = useState<Movie[]>([]);
-  const [nowPlayingLoading, setNowPlayingLoading] = useState(true);
-
-  const [upcomingMovies, setUpcomingMovies] = useState<Movie[]>([]);
-  const [upcomingLoading, setUpcomingLoading] = useState(true);
-
-  const [topRatedMovies, setTopRatedMovies] = useState<Movie[]>([]);
-  const [topRatedLoading, setTopRatedLoading] = useState(true);
-
-  const [userMetadata, setUserMetadata] =
-    useState<UserMetadataInterface | null>(null);
-  const [userLoading, setUserLoading] = useState(true);
 
   const router = useRouter();
 
+  // Fetch movies when category changes (keep this local)
   useEffect(() => {
     setMoviesLoading(true);
+    setMoviesPage(1);
+    setMoviesHasMore(true);
     const fetchMovies = async () => {
       try {
         const genreId = selectedCategory
@@ -55,8 +67,14 @@ const IndexScreen = () => {
         const response = await getMovies({
           sortBy: "popularity.desc",
           genreId,
+          page: 1,
         });
         setMovies(response.results || []);
+        setMoviesHasMore(
+          response.total_pages
+            ? 1 < response.total_pages
+            : (response.results?.length ?? 0) > 0
+        );
       } catch (error) {
         console.error("Failed to fetch movies:", error);
       }
@@ -65,95 +83,107 @@ const IndexScreen = () => {
     fetchMovies();
   }, [selectedCategory]);
 
-  // Watch History
+  // Fetch watch history when screen is focused
   useFocusEffect(
     useCallback(() => {
-      setHistoryLoading(true);
-      let isActive = true;
-      const fetchWatchHistory = async () => {
-        try {
-          const history = await getWatchHistory();
-          if (isActive) setWatchHistory(history || []);
-        } catch (error) {
-          console.error("Failed to fetch watch history:", error);
-        }
-        setHistoryLoading(false);
-      };
-      fetchWatchHistory();
-      return () => {
-        isActive = false;
-      };
-    }, [])
+      fetchWatchHistory().catch(error => {
+        // Handle error silently
+      });
+    }, [fetchWatchHistory])
   );
 
-  // User Metadata
+  // Fetch initial data on mount
   useEffect(() => {
-    setUserLoading(true);
-    const fetchUserMetadata = async () => {
-      try {
-        const metadata = await getUserMetadata();
-        setUserMetadata(metadata || null);
-      } catch (error) {
-        console.error("Failed to fetch user metadata:", error);
-      }
-      setUserLoading(false);
-    };
-    fetchUserMetadata();
-  }, []);
+    // Fetch user data (non-blocking)
+    fetchUserMetadata().catch(error => {
+      // Handle error silently
+    });
+    
+    // Fetch essential movie data
+    fetchNowPlaying();
+    fetchUpcoming();
+    fetchTopRated();
+  }, [fetchUserMetadata, fetchNowPlaying, fetchUpcoming, fetchTopRated]);
 
-  // Now Playing
-  useEffect(() => {
-    setNowPlayingLoading(true);
-    const fetchNowPlayingMovies = async () => {
-      try {
-        const response = await getMovieList("now_playing", 1);
-        setNowPlayingMovies(response.results || []);
-      } catch (error) {
-        console.error("Failed to fetch now playing movies:", error);
-      }
-      setNowPlayingLoading(false);
-    };
-    fetchNowPlayingMovies();
-  }, []);
+  //handle infinite scroll for movies (keep this local)
+  const handleLoadMoreMovies = async () => {
+    if (moviesLoading || !moviesHasMore) return;
 
-  // Upcoming Movies
-  useEffect(() => {
-    setUpcomingLoading(true);
-    const fetchUpcomingMovies = async () => {
-      try {
-        const response = await getMovieList("upcoming", 1);
-        setUpcomingMovies(response.results || []);
-      } catch (error) {
-        console.error("Failed to fetch upcoming movies:", error);
-      }
-      setUpcomingLoading(false);
-    };
-    fetchUpcomingMovies();
-  }, []);
+    setMoviesLoading(true);
+    try {
+      const genreId = selectedCategory
+        ? MovieGenreMap[selectedCategory]
+        : undefined;
+      const nextPage = moviesPage + 1;
+      const response = await getMovies({
+        sortBy: "popularity.desc",
+        genreId,
+        page: nextPage,
+      });
 
-  // Top Rated Movies
-  useEffect(() => {
-    setTopRatedLoading(true);
-    const fetchTopRatedMovies = async () => {
-      try {
-        const response = await getMovieList("top_rated", 1);
-        setTopRatedMovies(response.results || []);
-      } catch (error) {
-        console.error("Failed to fetch top rated movies:", error);
-      }
-      setTopRatedLoading(false);
-    };
-    fetchTopRatedMovies();
-  }, []);
+      setMovies((prev) => [...prev, ...(response.results || [])]);
+      setMoviesPage(nextPage);
 
-  // Main loading is TRUE if any are loading
+      setMoviesHasMore(
+        response.total_pages
+          ? nextPage < response.total_pages
+          : (response.results?.length ?? 0) > 0
+      );
+    } catch (error) {
+      console.error("Failed to load more movies:", error);
+    }
+    setMoviesLoading(false);
+  };
+
+  // Use Zustand action for now playing infinite scroll
+  const handleLoadMoreNowPlaying = () => {
+    loadMoreNowPlaying();
+  };
+
+  //wrap the item component in React.memo to prevent unnecessary re-renders
+  const MovieItem = React.memo(({ item, onPress }: { item: Movie; onPress: () => void }) => (
+    <TouchableOpacity
+      className="w-1/3 p-2"
+      activeOpacity={0.7}
+      onPress={onPress}
+    >
+      <Image
+        source={{ uri: `https://image.tmdb.org/t/p/w500${item.poster_path}` }}
+        className="w-full h-60 rounded-lg"
+        resizeMode="cover"
+      />
+      <Text className="text-white mt-2" numberOfLines={2}>
+        {item.title}
+      </Text>
+      <Text className="text-gray-400 text-sm">
+        {item.release_date ? item.release_date.split("-")[0] : "Unknown"}
+      </Text>
+      <View className="flex-row items-center mt-1">
+        <Image
+          source={icons.star}
+          className="w-4 h-4 mr-1"
+          resizeMode="contain"
+        />
+        <Text className="text-yellow-400">
+          {item.vote_average ? item.vote_average.toFixed(1) : "N/A"}
+        </Text>
+      </View>
+    </TouchableOpacity>
+  ));
+  
+  MovieItem.displayName = 'MovieItem';
+
+  // Main loading is TRUE only for essential movie data, not user data
   const loading =
     moviesLoading ||
-    historyLoading ||
-    nowPlayingLoading ||
-    userLoading ||
-    upcomingLoading ||
-    topRatedLoading;
+    (nowPlayingLoading && nowPlayingMovies.length === 0) ||
+    (upcomingLoading && upcomingMovies.length === 0) ||
+    (topRatedLoading && topRatedMovies.length === 0);
+
+  // Debug logging - removed for production
+  useEffect(() => {
+    // Debug info removed
+  }, []);
 
   // ---- Header Rendering ----
   const renderHeader = () => (
@@ -191,6 +221,7 @@ const IndexScreen = () => {
         <SectionCarousel
           title="Recently Viewed Movies"
           movies={watchHistory}
+          listType="watchHistory"
           onPressMovie={(movie) =>
             router.push({
               pathname: "../movie/[id]" as const,
@@ -205,6 +236,9 @@ const IndexScreen = () => {
         <SectionCarousel
           title="Now Playing"
           movies={nowPlayingMovies}
+          listType="nowPlaying"
+          onEndReached={handleLoadMoreNowPlaying}
+          moviesLoading={nowPlayingLoading}
           onPressMovie={(movie) =>
             router.push({
               pathname: "../movie/[id]" as const,
@@ -219,6 +253,7 @@ const IndexScreen = () => {
         <SectionCarousel
           title="Upcoming Movies"
           movies={upcomingMovies}
+          listType="upcoming"
           onPressMovie={(movie) =>
             router.push({
               pathname: "../movie/[id]" as const,
@@ -233,6 +268,7 @@ const IndexScreen = () => {
         <SectionCarousel
           title="Top Rated Movies"
           movies={topRatedMovies}
+          listType="topRated"
           onPressMovie={(movie) =>
             router.push({
               pathname: "../movie/[id]" as const,
@@ -289,44 +325,29 @@ const IndexScreen = () => {
         keyExtractor={(item) => `movie-${item.id}`}
         numColumns={3}
         ListHeaderComponent={renderHeader}
-        contentContainerStyle={{ paddingBottom: 20 }}
+        contentContainerStyle={{ paddingBottom: 150 }}
+        className="mb-10"
         showsVerticalScrollIndicator={false}
         renderItem={({ item }) => (
-          <TouchableOpacity
-            className="w-1/3 p-2"
-            activeOpacity={0.7}
+          <MovieItem
+            item={item}
             onPress={() =>
               router.push({
                 pathname: "../movie/[id]" as const,
                 params: { id: String(item.id) },
               })
             }
-          >
-            <Image
-              source={{
-                uri: `https://image.tmdb.org/t/p/w500${item.poster_path}`,
-              }}
-              className="w-full h-60 rounded-lg"
-              resizeMode="cover"
-            />
-            <Text className="text-white mt-2" numberOfLines={2}>
-              {item.title}
-            </Text>
-            <Text className="text-gray-400 text-sm">
-              {item.release_date ? item.release_date.split("-")[0] : "Unknown"}
-            </Text>
-            <View className="flex-row items-center mt-1">
-              <Image
-                source={icons.star}
-                className="w-4 h-4 mr-1"
-                resizeMode="contain"
-              />
-              <Text className="text-yellow-400">
-                {item.vote_average ? item.vote_average.toFixed(1) : "N/A"}
-              </Text>
-            </View>
-          </TouchableOpacity>
+          />
         )}
+        onEndReached={handleLoadMoreMovies}
+        onEndReachedThreshold={0.6}
+        ListFooterComponent={
+          moviesLoading ? (
+            <View className="flex-1 items-center justify-center mt-4">
+              <ActivityIndicator size="large" color="#FF8700" />
+            </View>
+          ) : null
+        }
         ListEmptyComponent={() =>
           loading ? (
             <View className="flex-1 items-center justify-center mt-10">
@@ -336,6 +357,16 @@ const IndexScreen = () => {
           ) : (
             <Text className="text-white text-center mt-8">No movies found</Text>
           )
+        }
+      />
+      
+      {/* Global Section Modal - managed through Zustand */}
+      <SectionModal
+        onSelectMovie={(movie) =>
+          router.push({
+            pathname: "../movie/[id]" as const,
+            params: { id: String(movie.id) },
+          })
         }
       />
     </SafeAreaView>
